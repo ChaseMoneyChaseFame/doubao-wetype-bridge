@@ -1,6 +1,5 @@
 import AppKit
 import BridgeCore
-import CoreGraphics
 import Foundation
 
 enum BridgeStatus: Equatable {
@@ -32,34 +31,15 @@ enum BridgeStatus: Equatable {
   }
 }
 
-private let fastStartEventCallback: CGEventTapCallBack = { _, type, event, userInfo in
-  guard let userInfo else {
-    return Unmanaged.passUnretained(event)
-  }
-
-  let controller = Unmanaged<BridgeController>.fromOpaque(userInfo).takeUnretainedValue()
-  if type == .flagsChanged {
-    controller.handleFastStartEvent(event)
-  } else if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-    controller.reenableFastStartMonitor()
-  }
-  return Unmanaged.passUnretained(event)
-}
-
 final class BridgeController: @unchecked Sendable {
   private let inputSources: InputSourceController
   private let audioMonitor: AudioInputMonitor
   private let gracePeriod: TimeInterval
-  private let rightOptionKeyCode: Int64 = 61
 
   private var timer: Timer?
   private var lastSourceID = ""
   private var lastAudioState: Bool?
   private var session = VoiceSession()
-  private var eventTap: CFMachPort?
-  private var eventTapRunLoopSource: CFRunLoopSource?
-  private var rightOptionIsDown = false
-  private var lastFastStartRetryAt = Date.distantPast
 
   var statusDidChange: ((BridgeStatus) -> Void)?
 
@@ -85,7 +65,6 @@ final class BridgeController: @unchecked Sendable {
     lastSourceID = inputSources.currentID()
     setStatus(.waiting)
     RuntimeLog.shared.write("application launched; inputSource=\(lastSourceID); detector=CoreAudio")
-    ensureFastStartMonitor()
 
     timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
       self?.poll()
@@ -95,12 +74,6 @@ final class BridgeController: @unchecked Sendable {
   func stop() {
     timer?.invalidate()
     timer = nil
-    stopFastStartMonitor()
-  }
-
-  func refreshFastStartMonitor() {
-    stopFastStartMonitor()
-    ensureFastStartMonitor()
   }
 
   func restoreImmediately() {
@@ -114,10 +87,6 @@ final class BridgeController: @unchecked Sendable {
     }
   }
 
-  var fastStartAuthorized: Bool {
-    CGPreflightListenEventAccess()
-  }
-
   private func poll() {
     let sourceID = inputSources.currentID()
     if sourceID != lastSourceID {
@@ -126,14 +95,6 @@ final class BridgeController: @unchecked Sendable {
     }
 
     pollAudioState(sourceID: sourceID)
-
-    if eventTap == nil,
-      CGPreflightListenEventAccess(),
-      Date().timeIntervalSince(lastFastStartRetryAt) >= 2
-    {
-      lastFastStartRetryAt = Date()
-      ensureFastStartMonitor()
-    }
   }
 
   private func handleSourceChange(from previousID: String, to sourceID: String) {
@@ -201,81 +162,6 @@ final class BridgeController: @unchecked Sendable {
     }
     session.cancel()
     lastAudioState = nil
-  }
-
-  private func ensureFastStartMonitor() {
-    guard eventTap == nil else {
-      return
-    }
-
-    let eventMask = CGEventMask(1) << CGEventType.flagsChanged.rawValue
-    let pointer = Unmanaged.passUnretained(self).toOpaque()
-    guard
-      let tap = CGEvent.tapCreate(
-        tap: .cghidEventTap,
-        place: .headInsertEventTap,
-        options: .listenOnly,
-        eventsOfInterest: eventMask,
-        callback: fastStartEventCallback,
-        userInfo: pointer
-      )
-    else {
-      RuntimeLog.shared.write("fast start unavailable; input monitoring permission required")
-      return
-    }
-
-    let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-    eventTap = tap
-    eventTapRunLoopSource = runLoopSource
-    if let runLoopSource {
-      CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
-    }
-    CGEvent.tapEnable(tap: tap, enable: true)
-    RuntimeLog.shared.write("fast start monitor active")
-  }
-
-  private func stopFastStartMonitor() {
-    if let eventTap {
-      CGEvent.tapEnable(tap: eventTap, enable: false)
-    }
-    if let eventTapRunLoopSource {
-      CFRunLoopRemoveSource(CFRunLoopGetMain(), eventTapRunLoopSource, .commonModes)
-    }
-    eventTap = nil
-    eventTapRunLoopSource = nil
-  }
-
-  fileprivate func handleFastStartEvent(_ event: CGEvent) {
-    guard event.getIntegerValueField(.keyboardEventKeycode) == rightOptionKeyCode else {
-      return
-    }
-
-    let isDown = event.flags.contains(.maskAlternate)
-    defer { rightOptionIsDown = isDown }
-    guard
-      isDown,
-      !rightOptionIsDown,
-      inputSources.currentID().hasPrefix(InputSourceController.weTypeInputSourcePrefix)
-    else {
-      return
-    }
-
-    let startedAt = Date()
-    if inputSources.selectFirstDoubao() {
-      let elapsed = Date().timeIntervalSince(startedAt)
-      RuntimeLog.shared.write(
-        "fast start selected doubao; elapsed=\(String(format: "%.3f", elapsed))"
-      )
-    } else {
-      RuntimeLog.shared.write("fast start failed to select doubao")
-    }
-  }
-
-  fileprivate func reenableFastStartMonitor() {
-    if let eventTap {
-      CGEvent.tapEnable(tap: eventTap, enable: true)
-      RuntimeLog.shared.write("fast start monitor reenabled")
-    }
   }
 
   private func setStatus(_ status: BridgeStatus) {

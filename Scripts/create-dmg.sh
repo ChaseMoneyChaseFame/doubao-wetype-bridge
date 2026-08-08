@@ -2,7 +2,7 @@
 set -euo pipefail
 
 project_root="${0:A:h:h}"
-version="${VERSION:-0.1.0}"
+version="${VERSION:-0.1.1}"
 app_path="${1:-$project_root/.build/product/豆微输入法.app}"
 release_dir="$project_root/.build/release"
 dmg_path="$release_dir/DoubaoWeTypeBridge-$version-universal.dmg"

@@ -1,5 +1,4 @@
 import AppKit
-import CoreGraphics
 import ServiceManagement
 import SwiftUI
 
@@ -7,34 +6,19 @@ import SwiftUI
 final class SetupModel: ObservableObject {
   @Published private(set) var hasWeType = false
   @Published private(set) var hasDoubao = false
-  @Published private(set) var fastStartAuthorized = false
   @Published var launchAtLogin = false
 
   private let inputSources: InputSourceController
-  private let bridgeController: BridgeController
 
-  init(inputSources: InputSourceController, bridgeController: BridgeController) {
+  init(inputSources: InputSourceController) {
     self.inputSources = inputSources
-    self.bridgeController = bridgeController
     refresh()
   }
 
   func refresh() {
     hasWeType = inputSources.hasWeType()
     hasDoubao = inputSources.hasDoubao()
-    fastStartAuthorized = CGPreflightListenEventAccess()
     launchAtLogin = SMAppService.mainApp.status == .enabled
-    if fastStartAuthorized {
-      bridgeController.refreshFastStartMonitor()
-    }
-  }
-
-  func requestFastStartAuthorization() {
-    _ = CGRequestListenEventAccess()
-    refresh()
-    if !fastStartAuthorized {
-      openURL("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")
-    }
   }
 
   func setLaunchAtLogin(_ enabled: Bool) {
@@ -104,14 +88,6 @@ struct SetupView: View {
         action: model.openDoubaoSettings
       )
       Divider()
-      statusRow(
-        icon: "bolt.fill",
-        title: "快速启动",
-        ready: model.fastStartAuthorized,
-        actionTitle: "授权",
-        action: model.requestFastStartAuthorization
-      )
-      Divider()
 
       HStack(spacing: 12) {
         Image(systemName: "power")
@@ -149,7 +125,7 @@ struct SetupView: View {
       }
     }
     .padding(28)
-    .frame(width: 520, height: 430)
+    .frame(width: 520, height: 370)
     .background(Color(nsColor: .windowBackgroundColor))
   }
 

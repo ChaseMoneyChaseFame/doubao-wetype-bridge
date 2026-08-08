@@ -67,6 +67,20 @@ do {
   expect(session.audioStoppedAt == nil, "resume must clear stop timestamp")
 }
 
+do {
+  var session = VoiceSession()
+  session.begin(targetID: "wechat")
+  expect(!session.observeAudio(active: true, at: start, gracePeriod: grace), "first press starts recording")
+  expect(
+    !session.observeAudio(active: false, at: start.addingTimeInterval(8), gracePeriod: grace),
+    "second press stops recording"
+  )
+  expect(
+    session.observeAudio(active: false, at: start.addingTimeInterval(8.6), gracePeriod: grace),
+    "second press restores WeType after commit grace"
+  )
+}
+
 if failureCount > 0 {
   fputs("\(failureCount) self-test(s) failed\n", stderr)
   exit(1)

@@ -118,7 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       return
     }
 
-    let model = SetupModel(inputSources: inputSources, bridgeController: bridgeController)
+    let model = SetupModel(inputSources: inputSources)
     let view = SetupView(model: model) { [weak self] in
       UserDefaults.standard.set(true, forKey: "hasCompletedSetup")
       self?.setupWindow?.orderOut(nil)
@@ -149,8 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   private func refreshLaunchAtLoginMenuState() {
-    let model =
-      setupModel ?? SetupModel(inputSources: inputSources, bridgeController: bridgeController)
+    let model = setupModel ?? SetupModel(inputSources: inputSources)
     model.refresh()
     launchAtLoginMenuItem?.state = model.launchAtLogin ? .on : .off
   }

@@ -48,11 +48,6 @@ final class InputSourceController {
   }
 
   @discardableResult
-  func selectFirstDoubao() -> Bool {
-    selectFirst(prefix: Self.doubaoInputSourcePrefix)
-  }
-
-  @discardableResult
   func select(id targetID: String) -> Bool {
     for source in inputSources() {
       guard stringProperty(source, key: kTISPropertyInputSourceID) == targetID else {
