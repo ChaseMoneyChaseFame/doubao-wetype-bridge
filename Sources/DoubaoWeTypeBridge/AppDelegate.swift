@@ -34,10 +34,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   private func configureStatusItem() {
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-    item.button?.image = NSImage(
-      systemSymbolName: "waveform.badge.mic",
-      accessibilityDescription: "豆微输入法"
-    )
+    item.button?.image = makeStatusIcon()
+    item.button?.imagePosition = .imageOnly
+    item.button?.imageScaling = .scaleProportionallyDown
     item.button?.toolTip = "豆微输入法"
 
     let menu = NSMenu()
@@ -63,6 +62,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     statusMenuItem = status
     launchAtLoginMenuItem = launchItem
     refreshLaunchAtLoginMenuState()
+  }
+
+  /// A monochrome version of the app mark for the menu bar. Template images
+  /// automatically follow the menu bar's light/dark appearance.
+  private func makeStatusIcon() -> NSImage {
+    let image = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { rect in
+      NSColor.black.setStroke()
+
+      let leftBubble = NSBezierPath(
+        roundedRect: NSRect(x: 1.5, y: 6.5, width: 9, height: 6.5),
+        xRadius: 2.7,
+        yRadius: 2.7
+      )
+      leftBubble.lineWidth = 1.4
+      leftBubble.stroke()
+
+      let rightBubble = NSBezierPath(
+        roundedRect: NSRect(x: 7.5, y: 4.5, width: 9, height: 6.5),
+        xRadius: 2.7,
+        yRadius: 2.7
+      )
+      rightBubble.lineWidth = 1.4
+      rightBubble.stroke()
+
+      let waveform = NSBezierPath()
+      waveform.lineWidth = 1.45
+      waveform.lineCapStyle = .round
+      waveform.lineJoinStyle = .round
+      waveform.move(to: NSPoint(x: 3.4, y: 9.6))
+      waveform.line(to: NSPoint(x: 5.0, y: 9.6))
+      waveform.line(to: NSPoint(x: 6.0, y: 12.0))
+      waveform.line(to: NSPoint(x: 7.1, y: 7.5))
+      waveform.line(to: NSPoint(x: 8.3, y: 12.4))
+      waveform.line(to: NSPoint(x: 9.5, y: 8.1))
+      waveform.line(to: NSPoint(x: 10.6, y: 9.6))
+      waveform.line(to: NSPoint(x: 14.5, y: 9.6))
+      waveform.stroke()
+      return true
+    }
+    image.isTemplate = true
+    image.accessibilityDescription = "豆微输入法"
+    return image
   }
 
   private func updateStatus(_ status: BridgeStatus) {
