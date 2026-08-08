@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test-and-build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test
+        run: |
+          swift run BridgeSelfTests
+          swift test
+      - name: Build universal app
+        run: |
+          chmod +x Scripts/*.sh
+          Scripts/build-app.sh
+      - name: Verify bundle
+        run: |
+          file ".build/product/豆微输入法.app/Contents/MacOS/DoubaoWeTypeBridge"
+          codesign --verify --deep --strict --verbose=2 ".build/product/豆微输入法.app"
