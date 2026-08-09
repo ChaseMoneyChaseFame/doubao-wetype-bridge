@@ -12,11 +12,22 @@ final class SetupModel: ObservableObject {
 
   private let inputSources: InputSourceController
   private let bridgeController: BridgeController
+  private var permissionTimer: Timer?
 
   init(inputSources: InputSourceController, bridgeController: BridgeController) {
     self.inputSources = inputSources
     self.bridgeController = bridgeController
     refresh()
+    permissionTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: true) {
+      [weak self] _ in
+      Task { @MainActor [weak self] in
+        self?.pollFastStartAuthorization()
+      }
+    }
+  }
+
+  deinit {
+    permissionTimer?.invalidate()
   }
 
   var readyCount: Int {
@@ -30,10 +41,24 @@ final class SetupModel: ObservableObject {
   func refresh() {
     hasWeType = inputSources.hasWeType()
     hasDoubao = inputSources.hasDoubao()
+    let wasFastStartAuthorized = fastStartAuthorized
     fastStartAuthorized = bridgeController.fastStartAuthorized
     launchAtLogin = SMAppService.mainApp.status == .enabled
-    if fastStartAuthorized {
+    if fastStartAuthorized && !wasFastStartAuthorized {
       bridgeController.refreshFastStartMonitor()
+    }
+  }
+
+  private func pollFastStartAuthorization() {
+    let wasAuthorized = fastStartAuthorized
+    let isAuthorized = bridgeController.fastStartAuthorized
+    guard isAuthorized != wasAuthorized else {
+      return
+    }
+    fastStartAuthorized = isAuthorized
+    if isAuthorized {
+      bridgeController.refreshFastStartMonitor()
+      RuntimeLog.shared.write("input monitoring permission detected; fast start refreshed")
     }
   }
 
