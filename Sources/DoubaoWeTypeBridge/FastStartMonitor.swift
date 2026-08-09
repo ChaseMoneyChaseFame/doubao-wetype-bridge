@@ -1,33 +1,32 @@
 import CoreGraphics
 import Foundation
 
-/// Observes modifier-only shortcut candidates used by Doubao's global voice input.
-/// Doubao exposes Command, Option, Control, Shift, Fn and modifier chords in its
-/// settings, while the actual shortcut is handled by Doubao itself.
+struct VoiceShortcut: Equatable {
+  let keyCode: Int64
+  let modifierFlags: CGEventFlags
+  let modifierOnly: Bool
+}
+
+/// Listens only for an explicitly configured Doubao shortcut.
+/// The bridge deliberately stays inactive when Doubao's setting cannot be read.
 final class FastStartMonitor {
+  private let shortcut: VoiceShortcut?
   private let onVoiceShortcut: () -> Void
-  private let candidateDelay: TimeInterval
   private var eventTap: CFMachPort?
   private var runLoopSource: CFRunLoopSource?
-  private var downModifierKeyCodes = Set<Int64>()
-  private var candidateWorkItem: DispatchWorkItem?
-  private var candidateGeneration = 0
+  private var shortcutIsDown = false
 
-  private static let modifierKeyCodes: Set<Int64> = [
-    54, 55,  // right / left Command
-    58, 61,  // right / left Option
-    59, 62,  // right / left Control
-    56, 60,  // right / left Shift
-    63,  // Fn
-  ]
-
-  init(candidateDelay: TimeInterval = 0.018, onVoiceShortcut: @escaping () -> Void) {
-    self.candidateDelay = candidateDelay
+  init(shortcut: VoiceShortcut? = nil, onVoiceShortcut: @escaping () -> Void) {
+    self.shortcut = shortcut
     self.onVoiceShortcut = onVoiceShortcut
   }
 
   deinit {
     stop()
+  }
+
+  var isConfigured: Bool {
+    shortcut != nil
   }
 
   var isAuthorized: Bool {
@@ -46,13 +45,18 @@ final class FastStartMonitor {
     guard eventTap == nil else {
       return
     }
-    if !isAuthorized {
+    guard let shortcut else {
+      RuntimeLog.shared.write("fast start disabled; Doubao voice shortcut is unknown")
+      return
+    }
+    guard isAuthorized else {
       RuntimeLog.shared.write("fast start unavailable; input monitoring permission required")
+      return
     }
 
     let flagsChangedMask = CGEventMask(1) << CGEventType.flagsChanged.rawValue
     let keyDownMask = CGEventMask(1) << CGEventType.keyDown.rawValue
-    let eventMask = flagsChangedMask | keyDownMask
+    let eventMask = shortcut.modifierOnly ? flagsChangedMask : flagsChangedMask | keyDownMask
     let pointer = Unmanaged.passUnretained(self).toOpaque()
     guard
       let tap = CGEvent.tapCreate(
@@ -77,11 +81,10 @@ final class FastStartMonitor {
     runLoopSource = source
     CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
     CGEvent.tapEnable(tap: tap, enable: true)
-    RuntimeLog.shared.write("fast start monitor active; shortcut=modifier candidate")
+    RuntimeLog.shared.write("fast start monitor active; shortcut explicitly configured")
   }
 
   func stop() {
-    cancelCandidate()
     if let eventTap {
       CGEvent.tapEnable(tap: eventTap, enable: false)
     }
@@ -90,13 +93,12 @@ final class FastStartMonitor {
     }
     eventTap = nil
     runLoopSource = nil
-    downModifierKeyCodes.removeAll()
+    shortcutIsDown = false
   }
 
   fileprivate func handleEvent(type: CGEventType, event: CGEvent) {
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-      cancelCandidate()
-      downModifierKeyCodes.removeAll()
+      shortcutIsDown = false
       if let eventTap {
         CGEvent.tapEnable(tap: eventTap, enable: true)
         RuntimeLog.shared.write("fast start monitor reenabled")
@@ -104,68 +106,34 @@ final class FastStartMonitor {
       return
     }
 
+    guard let shortcut else {
+      return
+    }
+
     let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-    if type == .keyDown {
-      // A regular Command/Option/Shift shortcut has a non-modifier key immediately
-      // after the modifier. Cancel its pending voice candidate before it fires.
-      if !Self.modifierKeyCodes.contains(keyCode) {
-        cancelCandidate()
-      }
+    guard keyCode == shortcut.keyCode else {
       return
     }
 
-    guard type == .flagsChanged, Self.modifierKeyCodes.contains(keyCode) else {
-      return
-    }
-
-    let isDown = isModifierDown(keyCode: keyCode, flags: event.flags)
-    if isDown {
-      downModifierKeyCodes.insert(keyCode)
-      scheduleCandidateIfNeeded()
-    } else {
-      downModifierKeyCodes.remove(keyCode)
-    }
-  }
-
-  private func isModifierDown(keyCode: Int64, flags: CGEventFlags) -> Bool {
-    switch keyCode {
-    case 54, 55:
-      return flags.contains(.maskCommand)
-    case 58, 61:
-      return flags.contains(.maskAlternate)
-    case 59, 62:
-      return flags.contains(.maskControl)
-    case 56, 60:
-      return flags.contains(.maskShift)
-    case 63:
-      return flags.contains(.maskSecondaryFn)
-    default:
-      return false
-    }
-  }
-
-  private func scheduleCandidateIfNeeded() {
-    guard candidateWorkItem == nil else {
-      return
-    }
-
-    candidateGeneration += 1
-    let generation = candidateGeneration
-    let workItem = DispatchWorkItem { [weak self] in
-      guard let self, self.candidateGeneration == generation else {
+    if shortcut.modifierOnly {
+      guard type == .flagsChanged else {
         return
       }
-      self.candidateWorkItem = nil
-      self.onVoiceShortcut()
+      let isDown = event.flags.contains(shortcut.modifierFlags)
+      let wasDown = shortcutIsDown
+      shortcutIsDown = isDown
+      guard isDown, !wasDown else {
+        return
+      }
+    } else {
+      guard type == .keyDown, event.flags.contains(shortcut.modifierFlags) else {
+        return
+      }
     }
-    candidateWorkItem = workItem
-    DispatchQueue.main.asyncAfter(deadline: .now() + candidateDelay, execute: workItem)
-  }
 
-  private func cancelCandidate() {
-    candidateGeneration += 1
-    candidateWorkItem?.cancel()
-    candidateWorkItem = nil
+    DispatchQueue.main.async { [onVoiceShortcut] in
+      onVoiceShortcut()
+    }
   }
 }
 
