@@ -64,45 +64,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     refreshLaunchAtLoginMenuState()
   }
 
-  /// A monochrome version of the app mark for the menu bar. Template images
-  /// automatically follow the menu bar's light/dark appearance.
+  /// Keep the menu bar mark simple enough to remain legible at 18pt.
   private func makeStatusIcon() -> NSImage {
-    let image = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { rect in
-      NSColor.black.setStroke()
-
-      let leftBubble = NSBezierPath(
-        roundedRect: NSRect(x: 1.5, y: 6.5, width: 9, height: 6.5),
-        xRadius: 2.7,
-        yRadius: 2.7
-      )
-      leftBubble.lineWidth = 1.4
-      leftBubble.stroke()
-
-      let rightBubble = NSBezierPath(
-        roundedRect: NSRect(x: 7.5, y: 4.5, width: 9, height: 6.5),
-        xRadius: 2.7,
-        yRadius: 2.7
-      )
-      rightBubble.lineWidth = 1.4
-      rightBubble.stroke()
-
-      let waveform = NSBezierPath()
-      waveform.lineWidth = 1.45
-      waveform.lineCapStyle = .round
-      waveform.lineJoinStyle = .round
-      waveform.move(to: NSPoint(x: 3.4, y: 9.6))
-      waveform.line(to: NSPoint(x: 5.0, y: 9.6))
-      waveform.line(to: NSPoint(x: 6.0, y: 12.0))
-      waveform.line(to: NSPoint(x: 7.1, y: 7.5))
-      waveform.line(to: NSPoint(x: 8.3, y: 12.4))
-      waveform.line(to: NSPoint(x: 9.5, y: 8.1))
-      waveform.line(to: NSPoint(x: 10.6, y: 9.6))
-      waveform.line(to: NSPoint(x: 14.5, y: 9.6))
-      waveform.stroke()
-      return true
+    let configuration = NSImage.SymbolConfiguration(pointSize: 15, weight: .medium)
+    guard
+      let symbol = NSImage(
+        systemSymbolName: "waveform",
+        accessibilityDescription: "豆微输入法"
+      ),
+      let image = symbol.withSymbolConfiguration(configuration)
+    else {
+      return NSImage(size: NSSize(width: 18, height: 18))
     }
+
     image.isTemplate = true
-    image.accessibilityDescription = "豆微输入法"
     return image
   }
 
@@ -118,7 +93,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       return
     }
 
-    let model = SetupModel(inputSources: inputSources)
+    let model = SetupModel(inputSources: inputSources, bridgeController: bridgeController)
     let view = SetupView(model: model) { [weak self] in
       UserDefaults.standard.set(true, forKey: "hasCompletedSetup")
       self?.setupWindow?.orderOut(nil)
@@ -149,7 +124,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   private func refreshLaunchAtLoginMenuState() {
-    let model = setupModel ?? SetupModel(inputSources: inputSources)
+    let model =
+      setupModel ?? SetupModel(inputSources: inputSources, bridgeController: bridgeController)
     model.refresh()
     launchAtLoginMenuItem?.state = model.launchAtLogin ? .on : .off
   }

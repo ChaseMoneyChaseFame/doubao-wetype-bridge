@@ -2,8 +2,8 @@
 set -euo pipefail
 
 project_root="${0:A:h:h}"
-version="${VERSION:-0.1.1}"
-build_number="${BUILD_NUMBER:-2}"
+version="${VERSION:-0.1.2}"
+build_number="${BUILD_NUMBER:-3}"
 identity="${CODE_SIGN_IDENTITY:--}"
 build_root="$project_root/.build/product"
 app_path="$build_root/豆微输入法.app"
@@ -11,6 +11,7 @@ contents_path="$app_path/Contents"
 macos_path="$contents_path/MacOS"
 resources_path="$contents_path/Resources"
 icon_work="$build_root/AppIcon.iconset"
+icon_source="$project_root/Assets/AppIcon-1024.png"
 
 rm -rf "$build_root"
 mkdir -p "$macos_path" "$resources_path" "$icon_work"
@@ -30,6 +31,11 @@ for architecture in arm64 x86_64; do
         --arch "$architecture" \
         --show-bin-path)/DoubaoWeTypeBridge"
     cp "$binary_path" "$build_root/DoubaoWeTypeBridge-$architecture"
+
+    if [[ "$architecture" == "x86_64" ]]; then
+        resource_bundle_path="${binary_path%/DoubaoWeTypeBridge}/DoubaoWeTypeBridge_DoubaoWeTypeBridge.bundle"
+        cp -R "$resource_bundle_path" "$resources_path/"
+    fi
 done
 
 lipo -create \
@@ -41,7 +47,12 @@ cp "$project_root/Config/Info.plist" "$contents_path/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $version" "$contents_path/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $build_number" "$contents_path/Info.plist"
 
-xcrun swift "$project_root/Scripts/generate-icon.swift" "$build_root/AppIcon-1024.png"
+if [[ -f "$icon_source" ]]; then
+    xcrun swift "$project_root/Scripts/prepare-app-icon.swift" \
+        "$icon_source" "$build_root/AppIcon-1024.png"
+else
+    xcrun swift "$project_root/Scripts/generate-icon.swift" "$build_root/AppIcon-1024.png"
+fi
 for spec in \
     "icon_16x16.png:16" \
     "icon_16x16@2x.png:32" \

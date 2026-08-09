@@ -17,14 +17,16 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.1</string>
+    <string>0.1.2</string>
     <key>CFBundleVersion</key>
-    <string>2</string>
+    <string>3</string>
     <key>LSMinimumSystemVersion</key>
     <string>15.0</string>
     <key>LSUIElement</key>
     <true/>
     <key>NSHumanReadableCopyright</key>
     <string>Copyright © 2026 豆微输入法 contributors</string>
+    <key>NSInputMonitoringUsageDescription</key>
+    <string>仅监听右 Option 键，用于提前唤醒豆包语音输入。</string>
 </dict>
 </plist>

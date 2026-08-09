@@ -18,7 +18,8 @@ let package = Package(
         .executableTarget(
             name: "DoubaoWeTypeBridge",
             dependencies: ["BridgeCore"],
-            path: "Sources/DoubaoWeTypeBridge"
+            path: "Sources/DoubaoWeTypeBridge",
+            resources: [.process("Resources")]
         ),
         .executableTarget(
             name: "BridgeSelfTests",

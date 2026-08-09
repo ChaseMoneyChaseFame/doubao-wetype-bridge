@@ -1,5 +1,6 @@
 import AppKit
 import BridgeCore
+import CoreGraphics
 import Foundation
 
 enum BridgeStatus: Equatable {
@@ -35,11 +36,15 @@ final class BridgeController: @unchecked Sendable {
   private let inputSources: InputSourceController
   private let audioMonitor: AudioInputMonitor
   private let gracePeriod: TimeInterval
+  private lazy var fastStartMonitor = FastStartMonitor { [weak self] in
+    self?.handleFastStartRightOption()
+  }
 
   private var timer: Timer?
   private var lastSourceID = ""
   private var lastAudioState: Bool?
   private var session = VoiceSession()
+  private var lastFastStartRetryAt = Date.distantPast
 
   var statusDidChange: ((BridgeStatus) -> Void)?
 
@@ -65,6 +70,7 @@ final class BridgeController: @unchecked Sendable {
     lastSourceID = inputSources.currentID()
     setStatus(.waiting)
     RuntimeLog.shared.write("application launched; inputSource=\(lastSourceID); detector=CoreAudio")
+    fastStartMonitor.start()
 
     timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
       self?.poll()
@@ -74,6 +80,20 @@ final class BridgeController: @unchecked Sendable {
   func stop() {
     timer?.invalidate()
     timer = nil
+    fastStartMonitor.stop()
+  }
+
+  func refreshFastStartMonitor() {
+    fastStartMonitor.stop()
+    fastStartMonitor.start()
+  }
+
+  var fastStartAuthorized: Bool {
+    fastStartMonitor.isAuthorized
+  }
+
+  func requestFastStartAuthorization() {
+    fastStartMonitor.requestAuthorization()
   }
 
   func restoreImmediately() {
@@ -95,6 +115,14 @@ final class BridgeController: @unchecked Sendable {
     }
 
     pollAudioState(sourceID: sourceID)
+
+    if !fastStartMonitor.isRunning,
+      fastStartMonitor.isAuthorized,
+      Date().timeIntervalSince(lastFastStartRetryAt) >= 2
+    {
+      lastFastStartRetryAt = Date()
+      fastStartMonitor.start()
+    }
   }
 
   private func handleSourceChange(from previousID: String, to sourceID: String) {
@@ -162,6 +190,21 @@ final class BridgeController: @unchecked Sendable {
     }
     session.cancel()
     lastAudioState = nil
+  }
+
+  private func handleFastStartRightOption() {
+    guard inputSources.currentID().hasPrefix(InputSourceController.weTypeInputSourcePrefix) else {
+      return
+    }
+
+    let startedAt = Date()
+    if inputSources.selectFirstDoubao() {
+      RuntimeLog.shared.write(
+        "fast start selected doubao; elapsed=\(String(format: "%.3f", Date().timeIntervalSince(startedAt)))"
+      )
+    } else {
+      RuntimeLog.shared.write("fast start failed to select doubao")
+    }
   }
 
   private func setStatus(_ status: BridgeStatus) {
