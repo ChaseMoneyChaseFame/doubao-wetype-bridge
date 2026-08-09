@@ -285,7 +285,7 @@ struct SetupView: View {
           id: "fast-start",
           icon: "bolt.fill",
           title: "快速启动",
-          detail: "提前唤醒豆包，减少首次等待",
+          detail: "跟随豆包语音快捷键，减少首次等待",
           accent: Palette.cobalt,
           ready: model.fastStartAuthorized,
           actionTitle: "授权",
