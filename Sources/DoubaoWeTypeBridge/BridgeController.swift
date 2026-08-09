@@ -37,7 +37,9 @@ final class BridgeController: @unchecked Sendable {
   private let audioMonitor: AudioInputMonitor
   private let gracePeriod: TimeInterval
   private let sourceHandoffTimeout: TimeInterval
-  private lazy var fastStartMonitor = FastStartMonitor { [weak self] in
+  private lazy var fastStartMonitor = FastStartMonitor(
+    shortcut: VoiceShortcutStore.load()
+  ) { [weak self] in
     self?.handleFastStartVoiceShortcut()
   }
 
@@ -103,6 +105,14 @@ final class BridgeController: @unchecked Sendable {
 
   var fastStartConfigured: Bool {
     fastStartMonitor.isConfigured
+  }
+
+  var fastStartShortcut: VoiceShortcut? {
+    fastStartMonitor.shortcut
+  }
+
+  func setFastStartShortcut(_ shortcut: VoiceShortcut) {
+    fastStartMonitor.updateShortcut(shortcut)
   }
 
   func requestFastStartAuthorization() {

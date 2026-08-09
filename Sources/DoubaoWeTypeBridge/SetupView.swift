@@ -9,11 +9,14 @@ final class SetupModel: ObservableObject {
   @Published private(set) var hasDoubao = false
   @Published private(set) var fastStartAuthorized = false
   @Published private(set) var fastStartConfigured = false
+  @Published private(set) var fastStartShortcutName: String?
+  @Published private(set) var isCapturingShortcut = false
   @Published var launchAtLogin = false
 
   private let inputSources: InputSourceController
   private let bridgeController: BridgeController
   private var permissionTimer: Timer?
+  private var shortcutCaptureMonitor: Any?
 
   init(inputSources: InputSourceController, bridgeController: BridgeController) {
     self.inputSources = inputSources
@@ -29,6 +32,9 @@ final class SetupModel: ObservableObject {
 
   deinit {
     permissionTimer?.invalidate()
+    if let shortcutCaptureMonitor {
+      NSEvent.removeMonitor(shortcutCaptureMonitor)
+    }
   }
 
   var readyCount: Int {
@@ -45,6 +51,7 @@ final class SetupModel: ObservableObject {
     let wasFastStartAuthorized = fastStartAuthorized
     fastStartAuthorized = bridgeController.fastStartAuthorized
     fastStartConfigured = bridgeController.fastStartConfigured
+    fastStartShortcutName = bridgeController.fastStartShortcut?.displayName
     launchAtLogin = SMAppService.mainApp.status == .enabled
     if fastStartAuthorized && !wasFastStartAuthorized {
       bridgeController.refreshFastStartMonitor()
@@ -70,6 +77,134 @@ final class SetupModel: ObservableObject {
     if !fastStartAuthorized {
       openURL("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")
     }
+  }
+
+  func handleFastStartAction() {
+    if fastStartConfigured && !fastStartAuthorized {
+      requestFastStartAuthorization()
+    } else {
+      beginShortcutCapture()
+    }
+  }
+
+  private func beginShortcutCapture() {
+    guard shortcutCaptureMonitor == nil else {
+      return
+    }
+    isCapturingShortcut = true
+    shortcutCaptureMonitor = NSEvent.addLocalMonitorForEvents(
+      matching: [.flagsChanged, .keyDown]
+    ) { [weak self] event in
+      Task { @MainActor [weak self] in
+        self?.captureShortcut(from: event)
+      }
+      return nil
+    }
+  }
+
+  private func captureShortcut(from event: NSEvent) {
+    if event.type == .keyDown, event.keyCode == 53 {
+      endShortcutCapture()
+      return
+    }
+
+    let shortcut: VoiceShortcut?
+    if event.type == .flagsChanged {
+      shortcut = Self.modifierShortcut(for: event)
+    } else if event.type == .keyDown {
+      shortcut = Self.keyShortcut(for: event)
+    } else {
+      shortcut = nil
+    }
+
+    guard let shortcut else {
+      return
+    }
+    bridgeController.setFastStartShortcut(shortcut)
+    RuntimeLog.shared.write(
+      "Doubao voice shortcut captured; name=\(shortcut.displayName); keyCode=\(shortcut.keyCode)"
+    )
+    endShortcutCapture()
+    refresh()
+  }
+
+  private func endShortcutCapture() {
+    if let shortcutCaptureMonitor {
+      NSEvent.removeMonitor(shortcutCaptureMonitor)
+      self.shortcutCaptureMonitor = nil
+    }
+    isCapturingShortcut = false
+  }
+
+  private static func modifierShortcut(for event: NSEvent) -> VoiceShortcut? {
+    let mapping: (name: String, nsFlag: NSEvent.ModifierFlags, cgFlag: CGEventFlags)?
+    switch event.keyCode {
+    case 54:
+      mapping = ("右 Command", .command, .maskCommand)
+    case 55:
+      mapping = ("左 Command", .command, .maskCommand)
+    case 58:
+      mapping = ("左 Option", .option, .maskAlternate)
+    case 61:
+      mapping = ("右 Option", .option, .maskAlternate)
+    case 59:
+      mapping = ("左 Control", .control, .maskControl)
+    case 62:
+      mapping = ("右 Control", .control, .maskControl)
+    case 56:
+      mapping = ("左 Shift", .shift, .maskShift)
+    case 60:
+      mapping = ("右 Shift", .shift, .maskShift)
+    case 63:
+      mapping = ("Fn", .function, .maskSecondaryFn)
+    default:
+      mapping = nil
+    }
+
+    guard let mapping, event.modifierFlags.contains(mapping.nsFlag) else {
+      return nil
+    }
+    return VoiceShortcut(
+      keyCode: Int64(event.keyCode),
+      modifierFlagsRawValue: mapping.cgFlag.rawValue,
+      modifierOnly: true,
+      displayName: mapping.name
+    )
+  }
+
+  private static func keyShortcut(for event: NSEvent) -> VoiceShortcut? {
+    var cgFlags: CGEventFlags = []
+    var names: [String] = []
+    if event.modifierFlags.contains(.control) {
+      cgFlags.insert(.maskControl)
+      names.append("Control")
+    }
+    if event.modifierFlags.contains(.option) {
+      cgFlags.insert(.maskAlternate)
+      names.append("Option")
+    }
+    if event.modifierFlags.contains(.shift) {
+      cgFlags.insert(.maskShift)
+      names.append("Shift")
+    }
+    if event.modifierFlags.contains(.command) {
+      cgFlags.insert(.maskCommand)
+      names.append("Command")
+    }
+    if event.modifierFlags.contains(.function) {
+      cgFlags.insert(.maskSecondaryFn)
+      names.append("Fn")
+    }
+
+    let rawKeyName = event.charactersIgnoringModifiers?.uppercased() ?? ""
+    let keyName = rawKeyName.isEmpty ? "键码 \(event.keyCode)" : rawKeyName
+    names.append(keyName)
+    return VoiceShortcut(
+      keyCode: Int64(event.keyCode),
+      modifierFlagsRawValue: cgFlags.rawValue,
+      modifierOnly: false,
+      displayName: names.joined(separator: " + ")
+    )
   }
 
   func setLaunchAtLogin(_ enabled: Bool) {
@@ -190,7 +325,7 @@ struct SetupView: View {
 
       statusBadge(ready: ready)
 
-      if let actionTitle, !ready || title == "豆包输入法" {
+      if let actionTitle, !ready || title == "豆包输入法" || title == "快速启动" {
         Button(actionTitle, action: action)
           .buttonStyle(.bordered)
           .controlSize(.small)
@@ -312,13 +447,11 @@ struct SetupView: View {
           id: "fast-start",
           icon: "bolt.fill",
           title: "快速启动",
-          detail: model.fastStartConfigured
-            ? "跟随已配置的豆包语音快捷键，减少首次等待"
-            : "未读取豆包快捷键，已安全停用",
+          detail: fastStartDetail,
           accent: Palette.cobalt,
           ready: model.fastStartConfigured && model.fastStartAuthorized,
-          actionTitle: model.fastStartConfigured ? "授权" : nil,
-          action: model.requestFastStartAuthorization
+          actionTitle: fastStartActionTitle,
+          action: model.handleFastStartAction
         )
       }
       .padding(6)
@@ -328,6 +461,29 @@ struct SetupView: View {
           .stroke(Palette.ink.opacity(0.08), lineWidth: 1)
       }
     }
+  }
+
+  private var fastStartDetail: String {
+    if model.isCapturingShortcut {
+      return "请按下豆包设置的语音快捷键"
+    }
+    guard let name = model.fastStartShortcutName else {
+      return "录制豆包语音快捷键后启用"
+    }
+    if !model.fastStartAuthorized {
+      return "已录制 \(name)，请授权输入监控"
+    }
+    return "已录制 \(name)，减少首次等待"
+  }
+
+  private var fastStartActionTitle: String? {
+    if model.isCapturingShortcut {
+      return nil
+    }
+    if model.fastStartConfigured && !model.fastStartAuthorized {
+      return "授权"
+    }
+    return model.fastStartConfigured ? "重录" : "录制"
   }
 
   private var launchAtLoginSection: some View {

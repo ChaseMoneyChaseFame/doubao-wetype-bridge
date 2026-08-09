@@ -1,16 +1,39 @@
 import CoreGraphics
 import Foundation
 
-struct VoiceShortcut: Equatable {
+struct VoiceShortcut: Codable, Equatable {
   let keyCode: Int64
-  let modifierFlags: CGEventFlags
+  let modifierFlagsRawValue: UInt64
   let modifierOnly: Bool
+  let displayName: String
+
+  var modifierFlags: CGEventFlags {
+    CGEventFlags(rawValue: modifierFlagsRawValue)
+  }
 }
 
-/// Listens only for an explicitly configured Doubao shortcut.
-/// The bridge deliberately stays inactive when Doubao's setting cannot be read.
+enum VoiceShortcutStore {
+  private static let preferenceKey = "doubaoVoiceShortcut"
+
+  static func load() -> VoiceShortcut? {
+    guard let data = UserDefaults.standard.data(forKey: preferenceKey) else {
+      return nil
+    }
+    return try? JSONDecoder().decode(VoiceShortcut.self, from: data)
+  }
+
+  static func save(_ shortcut: VoiceShortcut?) {
+    guard let shortcut, let data = try? JSONEncoder().encode(shortcut) else {
+      UserDefaults.standard.removeObject(forKey: preferenceKey)
+      return
+    }
+    UserDefaults.standard.set(data, forKey: preferenceKey)
+  }
+}
+
+/// Listens only for the shortcut explicitly captured in the bridge settings.
 final class FastStartMonitor {
-  private let shortcut: VoiceShortcut?
+  private(set) var shortcut: VoiceShortcut?
   private let onVoiceShortcut: () -> Void
   private var eventTap: CFMachPort?
   private var runLoopSource: CFRunLoopSource?
@@ -41,6 +64,16 @@ final class FastStartMonitor {
     _ = CGRequestListenEventAccess()
   }
 
+  func updateShortcut(_ shortcut: VoiceShortcut?) {
+    guard self.shortcut != shortcut else {
+      return
+    }
+    stop()
+    self.shortcut = shortcut
+    VoiceShortcutStore.save(shortcut)
+    start()
+  }
+
   func start() {
     guard eventTap == nil else {
       return
@@ -49,9 +82,8 @@ final class FastStartMonitor {
       RuntimeLog.shared.write("fast start disabled; Doubao voice shortcut is unknown")
       return
     }
-    guard isAuthorized else {
-      RuntimeLog.shared.write("fast start unavailable; input monitoring permission required")
-      return
+    if !isAuthorized {
+      RuntimeLog.shared.write("fast start awaiting input monitoring permission")
     }
 
     let flagsChangedMask = CGEventMask(1) << CGEventType.flagsChanged.rawValue
@@ -81,7 +113,9 @@ final class FastStartMonitor {
     runLoopSource = source
     CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
     CGEvent.tapEnable(tap: tap, enable: true)
-    RuntimeLog.shared.write("fast start monitor active; shortcut explicitly configured")
+    RuntimeLog.shared.write(
+      "fast start monitor active; shortcut=\(shortcut.displayName); keyCode=\(shortcut.keyCode)"
+    )
   }
 
   func stop() {
