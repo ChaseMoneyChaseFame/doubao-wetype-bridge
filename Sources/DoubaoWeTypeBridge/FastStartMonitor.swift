@@ -11,6 +11,7 @@ final class FastStartMonitor {
   private var runLoopSource: CFRunLoopSource?
   private var downModifierKeyCodes = Set<Int64>()
   private var candidateWorkItem: DispatchWorkItem?
+  private var candidateGeneration = 0
 
   private static let modifierKeyCodes: Set<Int64> = [
     54, 55,  // right / left Command
@@ -149,8 +150,10 @@ final class FastStartMonitor {
       return
     }
 
+    candidateGeneration += 1
+    let generation = candidateGeneration
     let workItem = DispatchWorkItem { [weak self] in
-      guard let self, !self.downModifierKeyCodes.isEmpty else {
+      guard let self, self.candidateGeneration == generation else {
         return
       }
       self.candidateWorkItem = nil
@@ -161,6 +164,7 @@ final class FastStartMonitor {
   }
 
   private func cancelCandidate() {
+    candidateGeneration += 1
     candidateWorkItem?.cancel()
     candidateWorkItem = nil
   }
