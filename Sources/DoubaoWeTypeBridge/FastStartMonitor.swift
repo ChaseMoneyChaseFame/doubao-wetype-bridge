@@ -33,6 +33,14 @@ enum VoiceShortcutStore {
 
 /// Listens only for the shortcut explicitly captured in the bridge settings.
 final class FastStartMonitor {
+  private static let relevantModifierFlags: CGEventFlags = [
+    .maskCommand,
+    .maskAlternate,
+    .maskControl,
+    .maskShift,
+    .maskSecondaryFn,
+  ]
+
   private(set) var shortcut: VoiceShortcut?
   private let onVoiceShortcut: () -> Void
   private var eventTap: CFMachPort?
@@ -148,19 +156,20 @@ final class FastStartMonitor {
     guard keyCode == shortcut.keyCode else {
       return
     }
+    let currentModifierFlags = event.flags.intersection(Self.relevantModifierFlags)
 
     if shortcut.modifierOnly {
       guard type == .flagsChanged else {
         return
       }
-      let isDown = event.flags.contains(shortcut.modifierFlags)
+      let isDown = currentModifierFlags == shortcut.modifierFlags
       let wasDown = shortcutIsDown
       shortcutIsDown = isDown
       guard isDown, !wasDown else {
         return
       }
     } else {
-      guard type == .keyDown, event.flags.contains(shortcut.modifierFlags) else {
+      guard type == .keyDown, currentModifierFlags == shortcut.modifierFlags else {
         return
       }
     }
