@@ -98,7 +98,7 @@ final class BridgeController: @unchecked Sendable {
   }
 
   var fastStartAuthorized: Bool {
-    fastStartMonitor.isAuthorized
+    fastStartMonitor.isAuthorized || fastStartMonitor.isRunning
   }
 
   func requestFastStartAuthorization() {

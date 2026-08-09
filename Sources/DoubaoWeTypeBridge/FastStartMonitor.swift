@@ -46,9 +46,8 @@ final class FastStartMonitor {
     guard eventTap == nil else {
       return
     }
-    guard isAuthorized else {
+    if !isAuthorized {
       RuntimeLog.shared.write("fast start unavailable; input monitoring permission required")
-      return
     }
 
     let flagsChangedMask = CGEventMask(1) << CGEventType.flagsChanged.rawValue
