@@ -8,6 +8,7 @@ final class SetupModel: ObservableObject {
   @Published private(set) var hasWeType = false
   @Published private(set) var hasDoubao = false
   @Published private(set) var fastStartAuthorized = false
+  @Published private(set) var fastStartConfigured = false
   @Published var launchAtLogin = false
 
   private let inputSources: InputSourceController
@@ -43,6 +44,7 @@ final class SetupModel: ObservableObject {
     hasDoubao = inputSources.hasDoubao()
     let wasFastStartAuthorized = fastStartAuthorized
     fastStartAuthorized = bridgeController.fastStartAuthorized
+    fastStartConfigured = bridgeController.fastStartConfigured
     launchAtLogin = SMAppService.mainApp.status == .enabled
     if fastStartAuthorized && !wasFastStartAuthorized {
       bridgeController.refreshFastStartMonitor()
@@ -160,7 +162,7 @@ struct SetupView: View {
     detail: String,
     accent: Color,
     ready: Bool,
-    actionTitle: String,
+    actionTitle: String?,
     action: @escaping () -> Void
   ) -> some View {
     let isHovered = hoveredRow == id
@@ -188,7 +190,7 @@ struct SetupView: View {
 
       statusBadge(ready: ready)
 
-      if !ready || title == "豆包输入法" {
+      if let actionTitle, !ready || title == "豆包输入法" {
         Button(actionTitle, action: action)
           .buttonStyle(.bordered)
           .controlSize(.small)
@@ -310,10 +312,12 @@ struct SetupView: View {
           id: "fast-start",
           icon: "bolt.fill",
           title: "快速启动",
-          detail: "跟随豆包语音快捷键，减少首次等待",
+          detail: model.fastStartConfigured
+            ? "跟随已配置的豆包语音快捷键，减少首次等待"
+            : "未读取豆包快捷键，已安全停用",
           accent: Palette.cobalt,
-          ready: model.fastStartAuthorized,
-          actionTitle: "授权",
+          ready: model.fastStartConfigured && model.fastStartAuthorized,
+          actionTitle: model.fastStartConfigured ? "授权" : nil,
           action: model.requestFastStartAuthorization
         )
       }
