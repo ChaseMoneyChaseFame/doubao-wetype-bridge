@@ -74,4 +74,28 @@ final class VoiceSessionTests: XCTestCase {
       session.observeAudio(
         active: false, at: start.addingTimeInterval(8.6), gracePeriod: gracePeriod))
   }
+
+  func testBriefAudioPulseDoesNotConfirmRecording() {
+    var session = VoiceSession()
+    session.begin(targetID: "wechat")
+
+    XCTAssertFalse(
+      session.observeAudio(
+        active: true,
+        at: start,
+        gracePeriod: gracePeriod,
+        recordingConfirmationPeriod: 0.2
+      )
+    )
+    XCTAssertFalse(
+      session.observeAudio(
+        active: false,
+        at: start.addingTimeInterval(0.05),
+        gracePeriod: gracePeriod,
+        recordingConfirmationPeriod: 0.2
+      )
+    )
+    XCTAssertFalse(session.sawRecording)
+    XCTAssertNil(session.audioStoppedAt)
+  }
 }

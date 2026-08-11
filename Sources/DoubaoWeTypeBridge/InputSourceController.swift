@@ -11,6 +11,19 @@ final class InputSourceController {
   static let weTypeInputSourcePrefix = "com.tencent.inputmethod.wetype"
   static let doubaoInputSourcePrefix = "com.bytedance.inputmethod.doubaoime"
 
+  private let sourceLock = NSLock()
+  private var cachedInputSources: [TISInputSource]?
+
+  init() {
+    _ = inputSources()
+  }
+
+  func refresh() {
+    sourceLock.lock()
+    cachedInputSources = nil
+    sourceLock.unlock()
+  }
+
   func currentID() -> String {
     guard
       let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
@@ -37,6 +50,14 @@ final class InputSourceController {
 
   func hasDoubao() -> Bool {
     installedSources().contains { $0.id.hasPrefix(Self.doubaoInputSourcePrefix) }
+  }
+
+  func preferredWeTypeID() -> String? {
+    let sources = installedSources()
+    if sources.contains(where: { $0.id == Self.weTypeInputSourceID }) {
+      return Self.weTypeInputSourceID
+    }
+    return sources.first { $0.id.hasPrefix(Self.weTypeInputSourcePrefix) }?.id
   }
 
   @discardableResult
@@ -78,11 +99,19 @@ final class InputSourceController {
   }
 
   private func inputSources() -> [TISInputSource] {
+    sourceLock.lock()
+    defer { sourceLock.unlock() }
+
+    if let cachedInputSources {
+      return cachedInputSources
+    }
+
     let rawSources = TISCreateInputSourceList(nil, false).takeRetainedValue() as NSArray
     var sources: [TISInputSource] = []
     for case let source as TISInputSource in rawSources {
       sources.append(source)
     }
+    cachedInputSources = sources
     return sources
   }
 

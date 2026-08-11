@@ -33,24 +33,34 @@ enum BridgeStatus: Equatable {
 }
 
 final class BridgeController: @unchecked Sendable {
+  private static let alwaysRestoreToWeTypePreferenceKey =
+    "alwaysRestoreToWeTypeAfterVoice"
+
   private let inputSources: InputSourceController
   private let audioMonitor: AudioInputMonitor
   private let gracePeriod: TimeInterval
   private let sourceHandoffTimeout: TimeInterval
+  private let unrecordedSessionTimeout: TimeInterval
   private lazy var fastStartMonitor = FastStartMonitor(
     shortcut: VoiceShortcutStore.load()
   ) { [weak self] in
-    self?.handleFastStartVoiceShortcut()
+    self?.handleFastStartVoiceShortcut() ?? false
   }
 
   private var timer: Timer?
   private var lastSourceID = ""
   private var lastAudioState: Bool?
   private var session = VoiceSession()
+  private var unrecordedSessionStartedAt: Date?
   private var sessionDetachedAt: Date?
   private var pendingTargetID: String?
   private var pendingTargetExpiresAt: Date?
   private var lastFastStartRetryAt = Date.distantPast
+  private var shortcutCaptureActive = false
+  private var sourceBeforeShortcutCapture: String?
+  private var alwaysRestoreToWeTypeAfterVoice = UserDefaults.standard.bool(
+    forKey: alwaysRestoreToWeTypePreferenceKey
+  )
 
   var statusDidChange: ((BridgeStatus) -> Void)?
 
@@ -58,12 +68,14 @@ final class BridgeController: @unchecked Sendable {
     inputSources: InputSourceController = InputSourceController(),
     audioMonitor: AudioInputMonitor = AudioInputMonitor(),
     gracePeriod: TimeInterval = 0.6,
-    sourceHandoffTimeout: TimeInterval = 1.5
+    sourceHandoffTimeout: TimeInterval = 1.5,
+    unrecordedSessionTimeout: TimeInterval = 3.0
   ) {
     self.inputSources = inputSources
     self.audioMonitor = audioMonitor
     self.gracePeriod = gracePeriod
     self.sourceHandoffTimeout = sourceHandoffTimeout
+    self.unrecordedSessionTimeout = unrecordedSessionTimeout
   }
 
   deinit {
@@ -77,6 +89,7 @@ final class BridgeController: @unchecked Sendable {
 
     lastSourceID = inputSources.currentID()
     session.cancel()
+    unrecordedSessionStartedAt = nil
     sessionDetachedAt = nil
     clearPendingTarget()
     setStatus(.waiting)
@@ -100,7 +113,11 @@ final class BridgeController: @unchecked Sendable {
   }
 
   var fastStartAuthorized: Bool {
-    fastStartMonitor.isAuthorized || fastStartMonitor.isRunning
+    fastStartMonitor.isAuthorized
+  }
+
+  var fastStartAutomationAuthorized: Bool {
+    fastStartMonitor.isAutomationAuthorized
   }
 
   var fastStartConfigured: Bool {
@@ -111,16 +128,74 @@ final class BridgeController: @unchecked Sendable {
     fastStartMonitor.shortcut
   }
 
+  var alwaysRestoreToWeTypeEnabled: Bool {
+    alwaysRestoreToWeTypeAfterVoice
+  }
+
+  func setAlwaysRestoreToWeTypeEnabled(_ enabled: Bool) {
+    alwaysRestoreToWeTypeAfterVoice = enabled
+    UserDefaults.standard.set(enabled, forKey: Self.alwaysRestoreToWeTypePreferenceKey)
+    RuntimeLog.shared.write("always restore to WeType updated; enabled=\(enabled)")
+  }
+
   func setFastStartShortcut(_ shortcut: VoiceShortcut) {
     fastStartMonitor.updateShortcut(shortcut)
+  }
+
+  func setFastStartShortcutCaptureActive(_ active: Bool) {
+    fastStartMonitor.setCaptureSuspended(active)
+    guard active != shortcutCaptureActive else {
+      return
+    }
+
+    shortcutCaptureActive = active
+    if active {
+      sourceBeforeShortcutCapture = inputSources.currentID()
+      session.cancel()
+      unrecordedSessionStartedAt = nil
+      sessionDetachedAt = nil
+      clearPendingTarget()
+      lastAudioState = nil
+      let sourceID = sourceBeforeShortcutCapture ?? "unknown"
+      RuntimeLog.shared.write(
+        "shortcut capture started; source=\(sourceID)"
+      )
+    } else {
+      let sourceBeforeCapture = sourceBeforeShortcutCapture
+      sourceBeforeShortcutCapture = nil
+      guard
+        let sourceBeforeCapture,
+        inputSources.currentID() != sourceBeforeCapture,
+        inputSources.select(id: sourceBeforeCapture)
+      else {
+        lastSourceID = inputSources.currentID()
+        return
+      }
+      lastSourceID = sourceBeforeCapture
+      RuntimeLog.shared.write(
+        "shortcut capture ended; restored source=\(sourceBeforeCapture)"
+      )
+    }
+  }
+
+  @discardableResult
+  func setFastStartShortcutCaptureHandler(
+    _ handler: ((CGEventType, Int64, CGEventFlags) -> Void)?
+  ) -> Bool {
+    fastStartMonitor.setShortcutCaptureHandler(handler)
   }
 
   func requestFastStartAuthorization() {
     fastStartMonitor.requestAuthorization()
   }
 
+  func requestFastStartAutomationAuthorization() {
+    fastStartMonitor.requestAutomationAuthorization()
+  }
+
   func restoreImmediately() {
     session.cancel()
+    unrecordedSessionStartedAt = nil
     sessionDetachedAt = nil
     clearPendingTarget()
     if inputSources.selectWeType() {
@@ -133,16 +208,26 @@ final class BridgeController: @unchecked Sendable {
   }
 
   private func poll() {
+    if shortcutCaptureActive {
+      lastSourceID = inputSources.currentID()
+      session.cancel()
+      unrecordedSessionStartedAt = nil
+      sessionDetachedAt = nil
+      clearPendingTarget()
+      lastAudioState = nil
+      return
+    }
+
     expirePendingTargetIfNeeded(at: Date())
     let sourceID = inputSources.currentID()
     if sourceID != lastSourceID {
       handleSourceChange(from: lastSourceID, to: sourceID)
-      lastSourceID = sourceID
+      lastSourceID = inputSources.currentID()
     }
 
-    expireUnrecordedSessionIfNeeded(sourceID: sourceID, at: Date())
+    expireUnrecordedSessionIfNeeded(at: Date())
     pollPendingHandoff(sourceID: sourceID)
-    pollAudioState()
+    pollAudioState(sourceID: sourceID)
 
     if !fastStartMonitor.isRunning,
       fastStartMonitor.isAuthorized,
@@ -179,6 +264,7 @@ final class BridgeController: @unchecked Sendable {
       }
 
       session.begin(targetID: targetID)
+      unrecordedSessionStartedAt = Date()
       sessionDetachedAt = nil
       clearPendingTarget()
       lastAudioState = nil
@@ -192,6 +278,12 @@ final class BridgeController: @unchecked Sendable {
     if session.isActive {
       if !session.sawRecording {
         sessionDetachedAt = sessionDetachedAt ?? Date()
+        if inputSources.selectFirstDoubao() {
+          lastSourceID = inputSources.currentID()
+          RuntimeLog.shared.write(
+            "reselected doubao while waiting for recording; source=\(lastSourceID)"
+          )
+        }
       }
       RuntimeLog.shared.write(
         "voice session retained across input source change; source=\(sourceID)"
@@ -231,18 +323,18 @@ final class BridgeController: @unchecked Sendable {
     pendingTargetExpiresAt = nil
   }
 
-  private func expireUnrecordedSessionIfNeeded(sourceID: String, at date: Date) {
+  private func expireUnrecordedSessionIfNeeded(at date: Date) {
     guard
       session.isActive,
       !session.sawRecording,
-      !sourceID.hasPrefix(InputSourceController.doubaoInputSourcePrefix),
-      let detachedAt = sessionDetachedAt,
-      date.timeIntervalSince(detachedAt) >= sourceHandoffTimeout
+      let startedAt = unrecordedSessionStartedAt,
+      date.timeIntervalSince(startedAt) >= unrecordedSessionTimeout
     else {
       return
     }
 
     session.cancel()
+    unrecordedSessionStartedAt = nil
     sessionDetachedAt = nil
     lastAudioState = nil
     setStatus(.waiting)
@@ -262,6 +354,7 @@ final class BridgeController: @unchecked Sendable {
     }
 
     session.begin(targetID: targetID)
+    unrecordedSessionStartedAt = Date()
     sessionDetachedAt = nil
     clearPendingTarget()
     lastAudioState = nil
@@ -271,12 +364,37 @@ final class BridgeController: @unchecked Sendable {
     )
   }
 
-  private func pollAudioState() {
-    guard session.isActive else {
-      return
+  private func pollAudioState(sourceID: String) {
+    if !session.isActive {
+      guard
+        alwaysRestoreToWeTypeAfterVoice,
+        sourceID.hasPrefix(InputSourceController.doubaoInputSourcePrefix)
+      else {
+        return
+      }
     }
 
     let audioState = audioMonitor.doubaoIsUsingAudioInput()
+
+    if !session.isActive {
+      guard
+        audioState == true,
+        let targetID = inputSources.preferredWeTypeID()
+      else {
+        return
+      }
+
+      session.begin(targetID: targetID)
+      unrecordedSessionStartedAt = Date()
+      sessionDetachedAt = nil
+      clearPendingTarget()
+      lastAudioState = nil
+      setStatus(.waitingForRecording)
+      RuntimeLog.shared.write(
+        "voice session started; target=\(targetID); reason=voice started while Doubao was already active"
+      )
+    }
+
     if audioState != lastAudioState {
       RuntimeLog.shared.write(
         "doubao audio input changed; active=\(String(describing: audioState))")
@@ -294,7 +412,12 @@ final class BridgeController: @unchecked Sendable {
       setStatus(.waitingForCommit)
     }
 
-    if session.observeAudio(active: audioState, at: Date(), gracePeriod: gracePeriod) {
+    if session.observeAudio(
+      active: audioState,
+      at: Date(),
+      gracePeriod: gracePeriod,
+      recordingConfirmationPeriod: 0.2
+    ) {
       restoreSessionTarget()
     }
   }
@@ -313,13 +436,18 @@ final class BridgeController: @unchecked Sendable {
       RuntimeLog.shared.write("restore failed; target=\(targetID)")
     }
     session.cancel()
+    unrecordedSessionStartedAt = nil
     sessionDetachedAt = nil
     lastAudioState = nil
   }
 
-  private func handleFastStartVoiceShortcut() {
-    guard inputSources.currentID().hasPrefix(InputSourceController.weTypeInputSourcePrefix) else {
-      return
+  private func handleFastStartVoiceShortcut() -> Bool {
+    let currentSourceID = inputSources.currentID()
+    if currentSourceID.hasPrefix(InputSourceController.doubaoInputSourcePrefix) {
+      return true
+    }
+    guard currentSourceID.hasPrefix(InputSourceController.weTypeInputSourcePrefix) else {
+      return false
     }
 
     let startedAt = Date()
@@ -327,8 +455,10 @@ final class BridgeController: @unchecked Sendable {
       RuntimeLog.shared.write(
         "fast start selected doubao; elapsed=\(String(format: "%.3f", Date().timeIntervalSince(startedAt)))"
       )
+      return true
     } else {
       RuntimeLog.shared.write("fast start failed to select doubao")
+      return false
     }
   }
 

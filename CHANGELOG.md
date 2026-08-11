@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Add an optional setting to restore WeType after voice input that starts while Doubao is already active.
+- Intercept and forward the captured voice shortcut after Doubao activates, avoiding cold-start event ordering races.
+- Require and report both Input Monitoring and Accessibility permissions for reliable shortcut forwarding.
+
 ## 0.1.2
 
 - 恢复右 Option 的异步提前切换，减少豆包长时间闲置后的首次唤醒等待。

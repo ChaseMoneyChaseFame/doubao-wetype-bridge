@@ -23,6 +23,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     if !UserDefaults.standard.bool(forKey: "hasCompletedSetup")
       || !inputSources.hasWeType()
       || !inputSources.hasDoubao()
+      || !bridgeController.fastStartConfigured
+      || !bridgeController.fastStartAuthorized
+      || !bridgeController.fastStartAutomationAuthorized
     {
       showSetup()
     }

@@ -1,3 +1,4 @@
+import ApplicationServices
 import CoreGraphics
 import Foundation
 
@@ -33,6 +34,7 @@ enum VoiceShortcutStore {
 
 /// Listens only for the shortcut explicitly captured in the bridge settings.
 final class FastStartMonitor {
+  private static let forwardedEventMarker: Int64 = 0x44425754
   private static let relevantModifierFlags: CGEventFlags = [
     .maskCommand,
     .maskAlternate,
@@ -42,12 +44,15 @@ final class FastStartMonitor {
   ]
 
   private(set) var shortcut: VoiceShortcut?
-  private let onVoiceShortcut: () -> Void
+  private let onVoiceShortcut: () -> Bool
   private var eventTap: CFMachPort?
   private var runLoopSource: CFRunLoopSource?
   private var shortcutIsDown = false
+  private var suppressShortcutUntilRelease = false
+  private var isCaptureSuspended = false
+  private var shortcutCaptureHandler: ((CGEventType, Int64, CGEventFlags) -> Void)?
 
-  init(shortcut: VoiceShortcut? = nil, onVoiceShortcut: @escaping () -> Void) {
+  init(shortcut: VoiceShortcut? = nil, onVoiceShortcut: @escaping () -> Bool) {
     self.shortcut = shortcut
     self.onVoiceShortcut = onVoiceShortcut
   }
@@ -64,12 +69,22 @@ final class FastStartMonitor {
     CGPreflightListenEventAccess()
   }
 
+  var isAutomationAuthorized: Bool {
+    AXIsProcessTrusted()
+  }
+
   var isRunning: Bool {
     eventTap != nil
   }
 
   func requestAuthorization() {
     _ = CGRequestListenEventAccess()
+  }
+
+  func requestAutomationAuthorization() {
+    let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
+      as CFDictionary
+    _ = AXIsProcessTrustedWithOptions(options)
   }
 
   func updateShortcut(_ shortcut: VoiceShortcut?) {
@@ -82,6 +97,20 @@ final class FastStartMonitor {
     start()
   }
 
+  func setCaptureSuspended(_ suspended: Bool) {
+    isCaptureSuspended = suspended
+    shortcutIsDown = false
+    suppressShortcutUntilRelease = false
+  }
+
+  @discardableResult
+  func setShortcutCaptureHandler(
+    _ handler: ((CGEventType, Int64, CGEventFlags) -> Void)?
+  ) -> Bool {
+    shortcutCaptureHandler = handler
+    return eventTap != nil
+  }
+
   func start() {
     guard eventTap == nil else {
       return
@@ -90,19 +119,25 @@ final class FastStartMonitor {
       RuntimeLog.shared.write("fast start disabled; Doubao voice shortcut is unknown")
       return
     }
-    if !isAuthorized {
-      RuntimeLog.shared.write("fast start awaiting input monitoring permission")
+    guard isAuthorized else {
+      RuntimeLog.shared.write("fast start unavailable; input monitoring permission required")
+      return
+    }
+    guard isAutomationAuthorized else {
+      RuntimeLog.shared.write("fast start unavailable; accessibility permission required")
+      return
     }
 
     let flagsChangedMask = CGEventMask(1) << CGEventType.flagsChanged.rawValue
     let keyDownMask = CGEventMask(1) << CGEventType.keyDown.rawValue
-    let eventMask = shortcut.modifierOnly ? flagsChangedMask : flagsChangedMask | keyDownMask
+    let keyUpMask = CGEventMask(1) << CGEventType.keyUp.rawValue
+    let eventMask = flagsChangedMask | keyDownMask | keyUpMask
     let pointer = Unmanaged.passUnretained(self).toOpaque()
     guard
       let tap = CGEvent.tapCreate(
         tap: .cghidEventTap,
         place: .headInsertEventTap,
-        options: .listenOnly,
+        options: .defaultTap,
         eventsOfInterest: eventMask,
         callback: fastStartEventCallback,
         userInfo: pointer
@@ -136,47 +171,132 @@ final class FastStartMonitor {
     eventTap = nil
     runLoopSource = nil
     shortcutIsDown = false
+    suppressShortcutUntilRelease = false
   }
 
-  fileprivate func handleEvent(type: CGEventType, event: CGEvent) {
+  /// Returns true when the physical event must be suppressed.
+  fileprivate func handleEvent(type: CGEventType, event: CGEvent) -> Bool {
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
       shortcutIsDown = false
+      suppressShortcutUntilRelease = false
       if let eventTap {
         CGEvent.tapEnable(tap: eventTap, enable: true)
         RuntimeLog.shared.write("fast start monitor reenabled")
       }
-      return
+      return false
+    }
+
+    if event.getIntegerValueField(.eventSourceUserData) == Self.forwardedEventMarker {
+      return false
+    }
+
+    if let shortcutCaptureHandler {
+      let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+      shortcutCaptureHandler(type, keyCode, event.flags)
     }
 
     guard let shortcut else {
-      return
+      return false
+    }
+    guard !isCaptureSuspended else {
+      return false
     }
 
-    let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-    guard keyCode == shortcut.keyCode else {
-      return
-    }
     let currentModifierFlags = event.flags.intersection(Self.relevantModifierFlags)
 
     if shortcut.modifierOnly {
       guard type == .flagsChanged else {
-        return
+        return false
+      }
+      let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+      guard keyCode == shortcut.keyCode else {
+        return false
       }
       let isDown = currentModifierFlags == shortcut.modifierFlags
       let wasDown = shortcutIsDown
-      shortcutIsDown = isDown
-      guard isDown, !wasDown else {
-        return
+      if isDown {
+        if !wasDown {
+          shortcutIsDown = true
+          suppressShortcutUntilRelease = dispatchVoiceShortcut(phase: "modifierDown")
+        }
+        return suppressShortcutUntilRelease
       }
+      shortcutIsDown = false
+      let shouldSuppress = suppressShortcutUntilRelease
+      suppressShortcutUntilRelease = false
+      return shouldSuppress
     } else {
+      let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+      guard keyCode == shortcut.keyCode else {
+        return false
+      }
+      if type == .keyUp {
+        let shouldSuppress = suppressShortcutUntilRelease
+        suppressShortcutUntilRelease = false
+        return shouldSuppress
+      }
       guard type == .keyDown, currentModifierFlags == shortcut.modifierFlags else {
+        return false
+      }
+      if !suppressShortcutUntilRelease {
+        suppressShortcutUntilRelease = dispatchVoiceShortcut(phase: "keyDown")
+      }
+      return suppressShortcutUntilRelease
+    }
+  }
+
+  private func dispatchVoiceShortcut(phase: String) -> Bool {
+    RuntimeLog.shared.write("fast start shortcut detected; phase=\(phase)")
+    guard onVoiceShortcut() else {
+      return false
+    }
+    let forwardedShortcut = shortcut
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { [weak self] in
+      guard let self, let forwardedShortcut else {
         return
       }
+      if self.post(shortcut: forwardedShortcut) {
+        RuntimeLog.shared.write("fast start forwarded voice shortcut")
+      } else {
+        RuntimeLog.shared.write("fast start failed to forward voice shortcut")
+      }
+    }
+    return true
+  }
+
+  private func post(shortcut: VoiceShortcut) -> Bool {
+    guard let source = CGEventSource(stateID: .hidSystemState) else {
+      return false
+    }
+    guard
+      let down = CGEvent(
+        keyboardEventSource: source,
+        virtualKey: CGKeyCode(shortcut.keyCode),
+        keyDown: true
+      ),
+      let up = CGEvent(
+        keyboardEventSource: source,
+        virtualKey: CGKeyCode(shortcut.keyCode),
+        keyDown: false
+      )
+    else {
+      return false
     }
 
-    DispatchQueue.main.async { [onVoiceShortcut] in
-      onVoiceShortcut()
+    down.setIntegerValueField(.eventSourceUserData, value: Self.forwardedEventMarker)
+    up.setIntegerValueField(.eventSourceUserData, value: Self.forwardedEventMarker)
+    down.flags = shortcut.modifierFlags
+    up.flags = shortcut.modifierOnly ? [] : shortcut.modifierFlags
+    if shortcut.modifierOnly {
+      down.type = .flagsChanged
+      up.type = .flagsChanged
     }
+
+    down.post(tap: .cghidEventTap)
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) {
+      up.post(tap: .cghidEventTap)
+    }
+    return true
   }
 }
 
@@ -186,6 +306,8 @@ private let fastStartEventCallback: CGEventTapCallBack = { _, type, event, userI
   }
 
   let monitor = Unmanaged<FastStartMonitor>.fromOpaque(userInfo).takeUnretainedValue()
-  monitor.handleEvent(type: type, event: event)
+  if monitor.handleEvent(type: type, event: event) {
+    return nil
+  }
   return Unmanaged.passUnretained(event)
 }
