@@ -82,8 +82,11 @@ jobs:
           echo "$NOTARY_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
           NOTARY_KEY_PATH="$RUNNER_TEMP/AuthKey.p8" \
             Scripts/notarize.sh ".build/release/DoubaoWeTypeBridge-${GITHUB_REF_NAME#v}-universal.dmg"
-          shasum -a 256 ".build/release/DoubaoWeTypeBridge-${GITHUB_REF_NAME#v}-universal.dmg" \
-            > ".build/release/DoubaoWeTypeBridge-${GITHUB_REF_NAME#v}-universal.dmg.sha256"
+          (
+            cd .build/release
+            shasum -a 256 "DoubaoWeTypeBridge-${GITHUB_REF_NAME#v}-universal.dmg" \
+              > "DoubaoWeTypeBridge-${GITHUB_REF_NAME#v}-universal.dmg.sha256"
+          )
 
       - name: Prepare release notes
         run: |

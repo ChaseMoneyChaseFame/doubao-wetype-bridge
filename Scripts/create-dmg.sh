@@ -24,5 +24,8 @@ hdiutil create \
     -format UDZO \
     "$dmg_path" >/dev/null
 
-shasum -a 256 "$dmg_path" > "$dmg_path.sha256"
+(
+    cd "$release_dir"
+    shasum -a 256 "${dmg_path:t}" > "${dmg_path:t}.sha256"
+)
 echo "$dmg_path"
