@@ -81,6 +81,31 @@ do {
   )
 }
 
+do {
+  var session = VoiceSession()
+  session.begin(targetID: "wechat")
+  expect(
+    !session.observeAudio(
+      active: true,
+      at: start,
+      gracePeriod: grace,
+      recordingConfirmationPeriod: 0.2
+    ),
+    "brief audio pulse starts as an unconfirmed candidate"
+  )
+  expect(
+    !session.observeAudio(
+      active: false,
+      at: start.addingTimeInterval(0.05),
+      gracePeriod: grace,
+      recordingConfirmationPeriod: 0.2
+    ),
+    "brief audio pulse must not restore"
+  )
+  expect(!session.sawRecording, "brief audio pulse must not confirm recording")
+  expect(session.audioStoppedAt == nil, "brief audio pulse must not start restore grace")
+}
+
 if failureCount > 0 {
   fputs("\(failureCount) self-test(s) failed\n", stderr)
   exit(1)

@@ -71,7 +71,11 @@ done
 iconutil -c icns "$icon_work" -o "$resources_path/AppIcon.icns"
 
 if [[ "$identity" == "-" ]]; then
-    codesign --force --deep --sign - --entitlements "$project_root/Config/Entitlements.plist" "$app_path"
+    bundle_identifier="$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$contents_path/Info.plist")"
+    codesign --force --deep --sign - \
+        --requirements "=designated => identifier \"$bundle_identifier\"" \
+        --entitlements "$project_root/Config/Entitlements.plist" \
+        "$app_path"
 else
     codesign --force --deep --options runtime --timestamp \
         --sign "$identity" \
