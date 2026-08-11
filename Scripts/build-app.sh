@@ -2,8 +2,8 @@
 set -euo pipefail
 
 project_root="${0:A:h:h}"
-version="${VERSION:-0.1.2}"
-build_number="${BUILD_NUMBER:-3}"
+version="${VERSION:-0.1.3}"
+build_number="${BUILD_NUMBER:-24}"
 identity="${CODE_SIGN_IDENTITY:--}"
 build_root="$project_root/.build/product"
 app_path="$build_root/豆微输入法.app"

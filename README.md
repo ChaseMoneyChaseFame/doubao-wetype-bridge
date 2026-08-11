@@ -27,13 +27,16 @@
 
 ## 安装与设置
 
-1. 从 [Releases](https://github.com/ChaseMoneyChaseFame/doubao-wetype-bridge/releases/latest) 下载最新版本，将「豆微输入法」拖入「应用程序」。
+1. 从 [Releases](https://github.com/ChaseMoneyChaseFame/doubao-wetype-bridge/releases/latest) 下载最新 DMG，将「豆微输入法」拖入「应用程序」。
 2. 启动豆微输入法。首次运行时，设置窗口会检查豆包输入法和微信输入法是否就绪。
 3. 在豆包输入法的语音设置中开启「全局唤起语音」，设置你常用的全局语音快捷键。
 4. 在豆微输入法设置中点击「录制」，按一次第 3 步设置的快捷键。
 5. 点击「授权」，允许「输入监控」。
-6. 按需开启「开机启动」。
-7. 如需从豆包输入法直接开始语音后也回到微信输入法，开启「语音结束回微信」。
+6. 再次点击「授权」，允许「辅助功能」。
+7. 按需开启「开机启动」。
+8. 如需从豆包输入法直接开始语音后也回到微信输入法，开启「语音结束回微信」。
+
+如果 macOS 提示无法验证开发者，请在「应用程序」中右键点击「豆微输入法」，选择「打开」。
 
 ## 使用方法
 
@@ -52,6 +55,8 @@
 - 运行日志保存在 `~/Library/Logs/DoubaoWeTypeBridge/runtime.log`，不包含输入文字或语音内容。
 
 完整说明见 [PRIVACY.md](PRIVACY.md)。
+
+版本更新记录见 [CHANGELOG.md](CHANGELOG.md)。每个正式版本的 DMG、SHA-256 校验文件和版本日志均发布在 [Releases](https://github.com/ChaseMoneyChaseFame/doubao-wetype-bridge/releases)。
 
 ## 本地构建
 

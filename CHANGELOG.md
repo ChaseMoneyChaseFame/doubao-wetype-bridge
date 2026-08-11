@@ -2,9 +2,16 @@
 
 ## Unreleased
 
-- Add an optional setting to restore WeType after voice input that starts while Doubao is already active.
-- Intercept and forward the captured voice shortcut after Doubao activates, avoiding cold-start event ordering races.
-- Require and report both Input Monitoring and Accessibility permissions for reliable shortcut forwarding.
+## 0.1.3 - 2026-08-11
+
+- 拦截首次实体语音快捷键，在豆包激活后转发完整快捷键，解决只切换输入法却没有启动语音的问题。
+- 修复输入源 API 在后台队列调用导致的闪退。
+- 修复微信输入法切换到豆包后立即反向切回微信的问题。
+- 增加未录音会话超时清理，避免异常状态影响下一次语音启动。
+- 增加「语音结束回微信」设置，支持从豆包输入法直接开始语音后恢复微信输入法。
+- 快速启动同时检查「输入监控」与「辅助功能」权限，修复设置页权限误判。
+- 改进豆包语音快捷键录制，准确识别左右修饰键并忽略输入法切换产生的合成事件。
+- 使用固定 Bundle ID 签名要求，降低应用更新后 macOS 权限失效的概率。
 
 ## 0.1.2
 
